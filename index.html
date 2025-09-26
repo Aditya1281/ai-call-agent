@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Free Web Call Agent</title>
+  <style>
+    body{font-family:Inter,system-ui,Segoe UI,Roboto,Arial;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0f172a;color:#e6eef8}
+    .card{width:950px;max-width:95%;background:linear-gradient(180deg,#0b1220,#071024);padding:22px;border-radius:14px;box-shadow:0 8px 30px rgba(2,6,23,.7);border:1px solid rgba(255,255,255,0.03)}
+    h1{margin:0 0 6px;font-size:20px}
+    p.lead{margin:0 0 12px;color:#9fb0d6}
+    .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+    button{padding:10px 14px;border-radius:10px;border:0;background:#1e293b;color:#dbe9ff;cursor:pointer;font-weight:600}
+    button.recording{background:#ef4444}
+    .log{height:300px;overflow:auto;background:#071827;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.02);color:#cfe6ff}
+    .line{padding:6px 8px;border-radius:8px;margin-bottom:8px}
+    .caller{background:linear-gradient(90deg, rgba(3,105,161,0.08), transparent);border-left:3px solid rgba(3,105,161,0.12)}
+    .agent{background:linear-gradient(90deg, rgba(20,184,166,0.06), transparent);border-left:3px solid rgba(20,184,166,0.12)}
+    small.gray{color:#91a6c1}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Free Web Call Agent — Prototype</h1>
+    <p class="lead">Browser-based AI call agent. Uses microphone and speech recognition. Free to host on GitHub Pages / Vercel.</p>
+
+    <div class="controls">
+      <button id="startBtn">Start Listening (Call)</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <button id="playLast" disabled>Play Last Reply</button>
+      <div style="margin-left:auto"><small class="gray">Works best in Chrome/Edge on desktop/mobile.</small></div>
+    </div>
+
+    <div class="log" id="log">
+      <div class="line agent"><strong>Agent:</strong> Ready — click <em>Start Listening</em> to begin a call.</div>
+    </div>
+  </div>
+
+<script>
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const log = document.getElementById('log');
+const playLast = document.getElementById('playLast');
+
+let recognition = null;
+let isListening = false;
+let lastReplyText = '';
+
+function appendLine(role, text){
+  const div = document.createElement('div');
+  div.className = 'line ' + (role==='caller' ? 'caller' : 'agent');
+  div.innerHTML = `<strong>${role==='caller' ? 'Caller' : 'Agent'}:</strong> ${escapeHtml(text)}`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function escapeHtml(s){ return (s+'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+
+// Simple assistant logic (keyword-based)
+function assistantReply(transcript){
+  const t = transcript.toLowerCase();
+  if(/\b(emergency|help|ambulance|police)\b/.test(t)) {
+    return "I detect this may be an emergency. Please call your local emergency number immediately.";
+  }
+  if(/\b(appointment|book|schedule|meeting|slot)\b/.test(t)) {
+    const dayMatch = t.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today)\b/);
+    const timeMatch = t.match(/\b\d{1,2}(:\d{2})?\s?(am|pm)?\b/);
+    let reply = "Sure — I can help book an appointment.";
+    if(dayMatch) reply += ` You mentioned ${dayMatch[0]}.`;
+    if(timeMatch) reply += ` Noted time ${timeMatch[0]}.`;
+    reply += " Please provide your full name and phone number to confirm.";
+    return reply;
+  }
+  if(/\b(price|cost|charge|fee)\b/.test(t)) {
+    return "Our pricing depends on the service. Can you tell me which service you are asking about?";
+  }
+  if(/\b(hello|hi|hey|namaste|good morning|good evening)\b/.test(t)) {
+    return "Hello! How can I help you today?";
+  }
+  return "Thanks for your message. I heard: \"" + transcript + "\". Would you like a callback, appointment, or pricing details?";
+}
+
+function speakText(text){
+  return new Promise((resolve, reject) => {
+    const synth = window.speechSynthesis;
+    if(!synth) { resolve(); return; }
+    const utter = new SpeechSynthesisUtterance(text);
+    const voices = synth.getVoices();
+    utter.voice = voices.find(v=>/en-US|en-GB|English/.test(v.name)) || voices[0] || null;
+    utter.rate = 1.0;
+    utter.onend = ()=>resolve();
+    utter.onerror = (e)=>{ resolve(); };
+    synth.speak(utter);
+  });
+}
+
+// Initialize SpeechRecognition
+function initRecognition(){
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SpeechRecognition) {
+    appendLine('agent','Sorry — your browser does not support SpeechRecognition. Use Chrome/Edge.');
+    startBtn.disabled = true;
+    return;
+  }
+  recognition = new SpeechRecognition();
+  recognition.lang = 'en-IN';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.continuous = false;
+
+  recognition.onstart = ()=>{ isListening = true; startBtn.disabled = true; stopBtn.disabled = false; appendLine('agent','Listening... Speak now.'); };
+  recognition.onresult = async (ev)=>{
+    const transcript = ev.results[0][0].transcript.trim();
+    appendLine('caller', transcript);
+    const reply = assistantReply(transcript);
+    lastReplyText = reply;
+    playLast.disabled = false;
+    appendLine('agent', reply);
+    await speakText(reply);
+    setTimeout(()=>{ if(isListening) recognition.start(); }, 400);
+  };
+  recognition.onerror = (ev)=>{ appendLine('agent','Speech recognition error.'); };
+  recognition.onend = ()=>{ isListening = false; startBtn.disabled = false; stopBtn.disabled = true; appendLine('agent','Call ended. Click Start to call again.'); };
+}
+
+// Controls
+startBtn.addEventListener('click', async ()=>{
+  if(!recognition) initRecognition();
+  try { await navigator.mediaDevices.getUserMedia({audio:true}); } catch(e){ appendLine('agent','Mic access denied.'); return; }
+  try { recognition.start(); } catch(e){}
+});
+
+stopBtn.addEventListener('click', ()=>{
+  if(recognition) { isListening = false; try{ recognition.stop(); } catch(e){} startBtn.disabled = false; stopBtn.disabled = true; }
+});
+
+playLast.addEventListener('click', ()=>{ if(lastReplyText) speakText(lastReplyText); });
+
+initRecognition();
+</script>
+</body>
+</html>
